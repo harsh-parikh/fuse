@@ -32,7 +32,8 @@ def characterize( df,
                  characterization_depth=2, 
                  n_neighbors = 100, 
                  p=np.inf, 
-                 min_samples_leaf=50):
+                 min_samples_leaf=50, 
+                 smallest_k = 1):
    
     df_exp = df.loc[(df[sample] == 1)]
     
@@ -79,14 +80,22 @@ def characterize( df,
                                                                                         result["obj"])
     M = dist_metric_learn.feature_importances_.reshape(-1,)
     X = df.drop(columns=["Yobs", "T", "S"]).values
+    
     nbrs = NearestNeighbors(n_neighbors=n_neighbors, algorithm='ball_tree',p=p).fit(X*M)
     distances, indices = nbrs.kneighbors(X)
     m = pd.DataFrame(list(map(lambda x: result.iloc[x]["obj"].mean(),indices)),index=df.index,columns=['avg.obj'])
+    
     indices = pd.DataFrame(indices,index=df.index,columns=['neighbor_%d'%(i) for i in range(indices.shape[1])])
     matched_groups = pd.concat([m,indices],axis=1)
+    
     df_result = df.copy(deep=True)
     df_result['flagged'] = 0
-    df_result.iloc[list(matched_groups.sort_values(by="avg.obj").drop(columns=["avg.obj"]).iloc[0]),-1] = 1
+    
+    mg_sorted = matched_groups.sort_values(by="avg.obj").drop(columns=["avg.obj"])
+    flagged_idx = []
+    for k in range(smallest_k):
+        flagged_idx = flagged_idx + list(mg_sorted.iloc[k]) 
+    df_result.iloc[flagged_idx,-1] = 1
     
     m_tree = tree.DecisionTreeRegressor(max_depth=characterization_depth).fit(
         df_result.drop(columns=["Yobs", "T", "S", "flagged"]), df_result["flagged"]
