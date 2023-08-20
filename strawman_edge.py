@@ -3,6 +3,7 @@ import pandas as pd
 import scipy.special as sp
 import sklearn.datasets as datasets
 
+
 def gen_XY(n=1000, seed=0):
     np.random.seed(seed)
     X, Y0 = datasets.make_friedman1(n_samples=n, noise=1, random_state=seed)

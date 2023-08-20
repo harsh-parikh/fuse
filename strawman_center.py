@@ -3,6 +3,7 @@ import pandas as pd
 import scipy.special as sp
 import sklearn.datasets as datasets
 
+
 def gen_XY(n=1000, seed=0):
     np.random.seed(seed)
     X, Y0 = datasets.make_friedman1(n_samples=n, noise=1, random_state=seed)
@@ -22,7 +23,7 @@ def gen_XY(n=1000, seed=0):
 def gen_S(X, seed=0):
     seed = seed + 1
     np.random.seed(seed)
-    a = - 3 * ((X["X0"] > 0.4) * (X["X0"] < 0.6) * (X["X1"] > 0.4) * (X["X1"] < 0.6))
+    a = -3 * ((X["X0"] > 0.4) * (X["X0"] < 0.6) * (X["X1"] > 0.4) * (X["X1"] < 0.6))
     S = np.random.binomial(1, sp.expit(a))
     return pd.DataFrame(S, columns=["S"])
 
