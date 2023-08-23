@@ -30,7 +30,7 @@ def estimate_sim(data, outcome, treatment, sample, w=None):
     v = a * b
 
     atte = np.sum( w * v ) / np.sum( w * b * S )
-    std_err = np.sqrt(np.sum((v - atte) ** 2) / (n * pi)**2 )
+    std_err = np.sqrt(np.sum((v - atte) ** 2) / (np.sum( w * b * S ))**2 )
     return atte, std_err
 
 
@@ -57,7 +57,7 @@ def estimate_out_reg(data, outcome, treatment, sample, w=None):
     v = (1 - S) * (mu_1_m.predict(X) - mu_0_m.predict(X))
 
     atte = np.sum( w * v ) / np.sum( w * (1 - S) )
-    std_err = np.sqrt(np.sum((v - atte) ** 2) / (n * (1 - pi))**2 )
+    std_err = np.sqrt(np.sum( w * ((v - atte) ** 2) ) / (np.sum( w * (1 - S) ))**2 )
     return atte, std_err
 
 
@@ -93,6 +93,6 @@ def estimate_dml(data, outcome, treatment, sample, w=None):
 
     v = v1 + v2
 
-    atte = np.sum( w * v ) / (n * (1 - pi))
-    std_err = np.sqrt( np.sum((v - atte) ** 2) / (n * (1 - pi))**2 )
+    atte = np.sum( w * v ) / np.sum( w * (1 - S) )
+    std_err = np.sqrt( np.sum( w * ((v - atte) ** 2) ) / (np.sum( w * (1 - S) ))**2 )
     return atte, std_err
