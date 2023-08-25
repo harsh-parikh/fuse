@@ -6,30 +6,11 @@ import sklearn.linear_model as lm
 import sklearn.ensemble as en
 import sklearn.tree as tree
 import scipy.optimize as optimize
-import estimate_atte as est
 import scipy.special as special
 from sklearn.model_selection import train_test_split
 
 
-def nonparam_opt( estimator, data, outcome, treatment, sample ):
-    def obj(w):
-        est, se = estimator(data, outcome, treatment, sample, w)
-        return se
-    w_init = np.ones((data.shape[0],))
-    result = optimize.minimize(obj, x0 = w_init)
-    return result.x, result.success
-
-def linear_opt( estimator, data, outcome, treatment, sample ):
-    X = data.drop(columns=[outcome, treatment, sample])
-    def obj(a):
-        w = (special.expit( np.matmul(X.values,a.reshape(-1,1)).reshape(-1,) ) > 0.5)
-        est, se = estimator(data, outcome, treatment, sample, w)
-        return se
-    a_init = np.zeros((X.shape[1],))
-    result = optimize.minimize(obj, x0 = a_init, method='COBYLA')
-    return result.x, result.success
-
-def tree_opt( estimator, data, outcome, treatment, sample ):
+def estimate_dml(data, outcome, treatment, sample, w=None):
     n = data.shape[0] # total number of units
     
     training_data, testing_data = train_test_split(data, test_size=0.25)
@@ -89,6 +70,38 @@ def tree_opt( estimator, data, outcome, treatment, sample ):
     pi, pi_m, mu_1_m, mu_0_m, e_m = train(training_data)
     v, vsq = estimate(testing_data)
     
+    return v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m, S
+    
+
+def nonparam_opt( estimator, data, outcome, treatment, sample ):
+    n = data.shape[0] # total number of units
+    v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m, S = estimate_dml(data, outcome, treatment, sample)
+    def obj(w):
+        se = np.sqrt( np.sum( w * vsq ) / (np.sum( w * (1 - S) ))**2 )
+        return se
+    w_init = np.ones((data.shape[0],))
+    result = optimize.minimize(obj, x0 = w_init)
+    return result.x, result.success
+
+def linear_opt( estimator, data, outcome, treatment, sample ):
+    X = data.drop(columns=[outcome, treatment, sample])
+    def obj(a):
+        w = (special.expit( np.matmul(X.values,a.reshape(-1,1)).reshape(-1,) ) > 0.5)
+        est, se = estimator(data, outcome, treatment, sample, w)
+        return se
+    a_init = np.zeros((X.shape[1],))
+    result = optimize.minimize(obj, x0 = a_init, method='COBYLA')
+    return result.x, result.success
+
+def tessellate_opt( estimator, data, outcome, treatment, sample, p_init = 0.5, max_iter=100 ):
+    n = data.shape[0] # total number of units
+    v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m = estimate_dml(data, outcome, treatment, sample)
+    
+    w = np.random.binomial(1,p_init,size=len(v))
+    for itr in range(0,max_iter):
+    
     # ATTE est and standard error
     atte = np.sum( v ) / np.sum( (1 - S) )
     std_err = np.sqrt( np.sum( vsq ) / (np.sum( (1 - S) ))**2 )
+    
+    return atte, std_err
