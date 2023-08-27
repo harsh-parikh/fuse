@@ -17,7 +17,7 @@ def estimate_sim(data, outcome, treatment, sample, w=None):
 
     if w is None:
         w = np.ones((n,))
-        
+
     pi = S.mean()
     pi_m = en.GradientBoostingClassifier().fit(X, S)
     e_m = lm.LogisticRegressionCV().fit(X.loc[S == 1], T.loc[S == 1])
@@ -29,8 +29,8 @@ def estimate_sim(data, outcome, treatment, sample, w=None):
     )
     v = a * b
 
-    atte = np.sum( w * v ) / np.sum( w * b * S )
-    std_err = np.sqrt(np.sum((v - atte) ** 2) / (np.sum( w * b * S ))**2 )
+    atte = np.sum(w * v) / np.sum(w * b * S)
+    std_err = np.sqrt(np.sum((v - atte) ** 2) / (np.sum(w * b * S)) ** 2)
     return atte, std_err
 
 
@@ -44,7 +44,7 @@ def estimate_out_reg(data, outcome, treatment, sample, w=None):
 
     if w is None:
         w = np.ones((n,))
-    
+
     pi = S.mean()
     pi_m = en.GradientBoostingClassifier().fit(X, S)
     mu_1_m = en.GradientBoostingRegressor().fit(
@@ -56,8 +56,8 @@ def estimate_out_reg(data, outcome, treatment, sample, w=None):
 
     v = (1 - S) * (mu_1_m.predict(X) - mu_0_m.predict(X))
 
-    atte = np.sum( w * v ) / np.sum( w * (1 - S) )
-    std_err = np.sqrt(np.sum( w * ((v - atte) ** 2) ) / (np.sum( w * (1 - S) ))**2 )
+    atte = np.sum(w * v) / np.sum(w * (1 - S))
+    std_err = np.sqrt(np.sum(w * ((v - atte) ** 2)) / (np.sum(w * (1 - S))) ** 2)
     return atte, std_err
 
 
@@ -68,7 +68,7 @@ def estimate_dml(data, outcome, treatment, sample, w=None):
     Y = data[outcome]
     T = data[treatment]
     X = data.drop(columns=[outcome, treatment, sample])
-    
+
     if w is None:
         w = np.ones((n,))
 
@@ -93,6 +93,6 @@ def estimate_dml(data, outcome, treatment, sample, w=None):
 
     v = v1 + v2
 
-    atte = np.sum( w * v ) / np.sum( w * (1 - S) )
-    std_err = np.sqrt( np.sum( w * ((v - atte) ** 2) ) / (np.sum( w * (1 - S) ))**2 )
+    atte = np.sum(w * v) / np.sum(w * (1 - S))
+    std_err = np.sqrt(np.sum(w * ((v - atte) ** 2)) / (np.sum(w * (1 - S))) ** 2)
     return atte, std_err
