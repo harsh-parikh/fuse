@@ -10,6 +10,7 @@ import scipy.special as special
 from sklearn.model_selection import train_test_split
 from sklearn.cluster import KMeans
 
+# ***Helper and Primary Functions***
 
 def estimate_dml(data, outcome, treatment, sample, w=None):
     n = data.shape[0]  # total number of units
@@ -83,8 +84,98 @@ def characterize_tree(X, w):
     f = tree.DecisionTreeRegressor(max_leaf_nodes=4).fit(X, w)
     return f
 
+def split(split_feature, X, D, parent_loss, depth):
+    fj = choose(split_feature, depth)
+    # base case
+    if fj == "leaf":
+        losses = [loss(0, X.index, D), loss(1, X.index, D)]
+        w_exploit = np.argmin(losses)
+        w_explore = np.random.binomial(1, 0.5)
+        explore = np.random.binomial(1, 0.05)
+        w = (explore * w_explore) + ( (1-explore) * w_exploit )
+        D.loc[X.index, "w"] = w  # update the global dataset
+        X.loc[
+            X.index, "w"
+        ] = w  # update the local dataset that will be used for recursion
+        return {"node": fj, "w": w, "local objective": np.min(losses), "depth": depth}
+    # induction case
+    else:
+        cj = midpoint(X[fj])
+        X_left = X.loc[X[fj] <= cj]
+        X_right = X.loc[X[fj] > cj]
+        loss_left = [loss(0, X_left.index, D), loss(1, X_left.index, D)]
+        loss_right = [loss(0, X_right.index, D), loss(1, X_right.index, D)]
+        min_loss_left = np.min(loss_left)
+        min_loss_right = np.min(loss_right)
 
-def nonparam_opt(data, outcome, treatment, sample):
+        new_loss = (
+            X_left.shape[0] * min_loss_left + X_right.shape[0] * min_loss_right
+        ) / (X.shape[0])
+        if new_loss <= parent_loss:
+            w_left = np.argmin(loss_left)
+            w_right = np.argmin(loss_right)
+
+            D.loc[X_left.index, "w"] = w_left  # update the global dataset
+            X_left.loc[
+                X_left.index, "w"
+            ] = w_left  # update the local dataset that will be used for recursion
+
+            D.loc[X_right.index, "w"] = w_right  # update the global dataset
+            X_right.loc[
+                X_right.index, "w"
+            ] = w_right  # update the local dataset that will be used for recursion
+            return {
+                "node": fj,
+                "split": cj,
+                "left_tree": split(split_feature, X_left, D, new_loss, depth + 1),
+                "right_tree": split(split_feature, X_right, D, new_loss, depth + 1),
+                "local objective": np.nan_to_num(
+                    np.sqrt(
+                        np.sum(D["vsq"] * D["w"])
+                        / ((np.sum((1 - D["S"]) * D["w"]) ** 2))
+                    ),
+                    nan=np.inf,
+                ),
+                "depth": depth,
+            }
+
+        else:
+            split_feature_updated = reduce_weight(fj, split_feature.copy(deep=True))
+            return split(split_feature_updated, X, D, parent_loss, depth)
+
+
+def midpoint(X):
+    return (X.max() + X.min()) / 2
+
+
+def choose(split_feature, depth):
+    # print(split_feature)
+    split_prob = split_feature.values
+    split_prob[0] = split_prob[0] * (2 ** (0 * depth/4))
+    split_prob = split_prob / np.sum(split_prob)
+    fj = np.random.choice(a=list(split_feature.index), p=split_prob)
+    # print(fj)
+    return fj
+
+
+def loss(val, indices, D):
+    D_ = D.copy(deep=True)
+    D_.loc[indices, "w"] = val
+    se = np.nan_to_num(
+        np.sqrt(np.sum(D_["vsq"] * D_["w"]) / ((np.sum((1 - D_["S"]) * D_["w"]) ** 2))),
+        nan=np.inf,
+    )
+    return se
+
+
+def reduce_weight(fj, split_feature):
+    split_feature.loc[fj] = split_feature.loc[fj] / 2
+    split_feature = split_feature / np.sum(split_feature)
+    return split_feature
+
+# ***Optimization Functions***
+
+def brute_force_opt(data, outcome, treatment, sample):
     v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data = estimate_dml(
         data, outcome, treatment, sample
     )
@@ -250,94 +341,73 @@ def tree_opt(data, outcome, treatment, sample, leaf_proba=0.25, seed=42):
     D["S"] = S
     np.random.seed(seed)
     w_tree = split(split_feature, D, D, np.inf, 0)
-    return w_tree, D, testing_data
+    return D, w_tree, testing_data
 
 
-def split(split_feature, X, D, parent_loss, depth):
-    fj = choose(split_feature, depth)
-    # base case
-    if fj == "leaf":
-        losses = [loss(0, X.index, D), loss(1, X.index, D)]
-        w_exploit = np.argmin(losses)
-        w_explore = np.random.binomial(1, 0.5)
-        explore = np.random.binomial(1, 0.05)
-        w = (explore * w_explore) + ( (1-explore) * w_exploit )
-        D.loc[X.index, "w"] = w  # update the global dataset
-        X.loc[
-            X.index, "w"
-        ] = w  # update the local dataset that will be used for recursion
-        return {"node": fj, "w": w, "local objective": np.min(losses), "depth": depth}
-    # induction case
-    else:
-        cj = midpoint(X[fj])
-        X_left = X.loc[X[fj] <= cj]
-        X_right = X.loc[X[fj] > cj]
-        loss_left = [loss(0, X_left.index, D), loss(1, X_left.index, D)]
-        loss_right = [loss(0, X_right.index, D), loss(1, X_right.index, D)]
-        min_loss_left = np.min(loss_left)
-        min_loss_right = np.min(loss_right)
-
-        new_loss = (
-            X_left.shape[0] * min_loss_left + X_right.shape[0] * min_loss_right
-        ) / (X.shape[0])
-        if new_loss <= parent_loss:
-            w_left = np.argmin(loss_left)
-            w_right = np.argmin(loss_right)
-
-            D.loc[X_left.index, "w"] = w_left  # update the global dataset
-            X_left.loc[
-                X_left.index, "w"
-            ] = w_left  # update the local dataset that will be used for recursion
-
-            D.loc[X_right.index, "w"] = w_right  # update the global dataset
-            X_right.loc[
-                X_right.index, "w"
-            ] = w_right  # update the local dataset that will be used for recursion
-            return {
-                "node": fj,
-                "split": cj,
-                "left_tree": split(split_feature, X_left, D, new_loss, depth + 1),
-                "right_tree": split(split_feature, X_right, D, new_loss, depth + 1),
-                "local objective": np.nan_to_num(
-                    np.sqrt(
-                        np.sum(D["vsq"] * D["w"])
-                        / ((np.sum((1 - D["S"]) * D["w"]) ** 2))
-                    ),
-                    nan=np.inf,
-                ),
-                "depth": depth,
-            }
-
-        else:
-            split_feature_updated = reduce_weight(fj, split_feature.copy(deep=True))
-            return split(split_feature_updated, X, D, parent_loss, depth)
-
-
-def midpoint(X):
-    return (X.max() + X.min()) / 2
-
-
-def choose(split_feature, depth):
-    # print(split_feature)
-    split_prob = split_feature.values
-    split_prob[0] = split_prob[0] * (2 ** (depth/4))
-    split_prob = split_prob / np.sum(split_prob)
-    fj = np.random.choice(a=list(split_feature.index), p=split_prob)
-    # print(fj)
-    return fj
-
-
-def loss(val, indices, D):
-    D_ = D.copy(deep=True)
-    D_.loc[indices, "w"] = val
-    se = np.nan_to_num(
-        np.sqrt(np.sum(D_["vsq"] * D_["w"]) / ((np.sum((1 - D_["S"]) * D_["w"]) ** 2))),
-        nan=np.inf,
+def forest_opt(data, outcome, treatment, sample, leaf_proba=0.25, seed=42, num_trees = 10, vote_threshold=2/3):
+    np.random.seed(seed)
+    v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data = estimate_dml(
+        data, outcome, treatment, sample
     )
-    return se
+    S = testing_data[sample]  # indicator for the sample
+    Y = testing_data[outcome]  # outcome variable
+    T = testing_data[treatment]  # indicator for the treatment
+    X = testing_data.drop(
+        columns=[outcome, treatment, sample]
+    )  # pre-treatment covariates
+    n = testing_data.shape[0]  # total number of units
+
+    vsq_m = lm.RidgeCV().fit(X, vsq)
+
+    features = ["leaf"] + list(X.columns)
+    proba = np.array(
+        [leaf_proba]
+        + list(
+            np.abs(
+                vsq_m.coef_.reshape(
+                    -1,
+                )
+            )
+            / np.sum(
+                np.abs(
+                    vsq_m.coef_.reshape(
+                        -1,
+                    )
+                )
+            )
+        )
+    )
+    proba = proba / np.sum(proba)
+    split_feature = pd.Series(proba, index=features)
+    # print(split_feature)
+
+    np.random.seed(seed)
+    
+    w_forest = []
+    D_forest = X.copy(deep=True)
+    D_forest["vsq"] = vsq
+    D_forest["S"] = S
+    
+    for t_iter in range(num_trees):
+        D = X.copy(deep=True)
+        D["vsq"] = vsq
+        D["w"] = np.ones_like(vsq)
+        D["S"] = S
+        w_tree = split(split_feature, D, D, np.inf, 0)
+        D_forest["w_tree_%d"%(t_iter)] = D["w"]
+        w_forest += [w_tree]
+    
+    baseline_loss = np.sqrt(np.sum(D_forest["vsq"]) / ((np.sum((1 - D_forest["S"])) ** 2)))
+    
+    not_in_rashomon_set = [ i for i in range(len(w_forest)) if w_forest[i]["local objective"] >= baseline_loss ]
+    rashomon_set = [ i for i in range(len(w_forest)) if w_forest[i]["local objective"] < baseline_loss ]
+    
+    D_rash = D_forest.drop(columns = ["w_tree_%d" % (i) for i in not_in_rashomon_set])
+    
+    D_w_rash = D_forest[["w_tree_%d" % (i) for i in rashomon_set]]
+    D_rash["w_opt"] = (D_w_rash.mean(axis=1) > (vote_threshold)).astype(int)
+    D_rash["vote_count"] = D_w_rash.sum(axis=1)
+    
+    return D_rash, D_forest, w_forest, rashomon_set, testing_data
 
 
-def reduce_weight(fj, split_feature):
-    split_feature.loc[fj] = split_feature.loc[fj] / 2
-    split_feature = split_feature / np.sum(split_feature)
-    return split_feature
