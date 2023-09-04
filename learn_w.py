@@ -80,18 +80,18 @@ def estimate_dml(data, outcome, treatment, sample, w=None):
     return v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data
 
 
-def characterize_tree(X, w):
-    f = tree.DecisionTreeRegressor(max_leaf_nodes=4).fit(X, w)
+def characterize_tree(X, w, max_depth=2):
+    f = tree.DecisionTreeClassifier(max_depth=max_depth).fit(X, w)
     return f
 
-def split(split_feature, X, D, parent_loss, depth):
+def split(split_feature, X, D, parent_loss, depth, explore_proba = 0.05):
     fj = choose(split_feature, depth)
     # base case
     if fj == "leaf":
         losses = [loss(0, X.index, D), loss(1, X.index, D)]
         w_exploit = np.argmin(losses)
         w_explore = np.random.binomial(1, 0.5)
-        explore = np.random.binomial(1, 0.05)
+        explore = np.random.binomial(1, explore_proba)
         w = (explore * w_explore) + ( (1-explore) * w_exploit )
         D.loc[X.index, "w"] = w  # update the global dataset
         X.loc[
@@ -124,20 +124,36 @@ def split(split_feature, X, D, parent_loss, depth):
             X_right.loc[
                 X_right.index, "w"
             ] = w_right  # update the local dataset that will be used for recursion
-            return {
-                "node": fj,
-                "split": cj,
-                "left_tree": split(split_feature, X_left, D, new_loss, depth + 1),
-                "right_tree": split(split_feature, X_right, D, new_loss, depth + 1),
-                "local objective": np.nan_to_num(
-                    np.sqrt(
-                        np.sum(D["vsq"] * D["w"])
-                        / ((np.sum((1 - D["S"]) * D["w"]) ** 2))
+            if np.random.binomial(1, 0.5):
+                return {
+                    "node": fj,
+                    "split": cj,
+                    "left_tree": split(split_feature, X_left, D, new_loss, depth + 1),
+                    "right_tree": split(split_feature, X_right, D, new_loss, depth + 1),
+                    "local objective": np.nan_to_num(
+                        np.sqrt(
+                            np.sum(D["vsq"] * D["w"])
+                            / ((np.sum(D["w"]) ** 2))
+                        ),
+                        nan=np.inf,
                     ),
-                    nan=np.inf,
-                ),
-                "depth": depth,
-            }
+                    "depth": depth,
+                }
+            else:
+                return {
+                    "node": fj,
+                    "split": cj,
+                    "right_tree": split(split_feature, X_right, D, new_loss, depth + 1),
+                    "left_tree": split(split_feature, X_left, D, new_loss, depth + 1),
+                    "local objective": np.nan_to_num(
+                        np.sqrt(
+                            np.sum(D["vsq"] * D["w"])
+                            / ((np.sum(D["w"]) ** 2))
+                        ),
+                        nan=np.inf,
+                    ),
+                    "depth": depth,
+                }
 
         else:
             split_feature_updated = reduce_weight(fj, split_feature.copy(deep=True))
@@ -162,7 +178,7 @@ def loss(val, indices, D):
     D_ = D.copy(deep=True)
     D_.loc[indices, "w"] = val
     se = np.nan_to_num(
-        np.sqrt(np.sum(D_["vsq"] * D_["w"]) / ((np.sum((1 - D_["S"]) * D_["w"]) ** 2))),
+        np.sqrt(np.sum(D_["vsq"] * D_["w"]) / ((np.sum(D_["w"]) ** 2))),
         nan=np.inf,
     )
     return se
@@ -188,16 +204,16 @@ def brute_force_opt(data, outcome, treatment, sample):
     n = testing_data.shape[0]  # total number of units
 
     def obj(w):
-        se = np.sqrt(np.sum(w * vsq) / (np.sum(w * (1 - S))) ** 2)
+        se = np.sqrt(np.sum(w * vsq) / (np.sum(w)) ** 2)
         return se
 
     w_init = np.ones((n,))
     result = optimize.minimize(obj, x0=w_init, method="SLSQP", options={"disp": True})
     w = result.x
     atte_unpruned = np.sum(v) / np.sum((1 - S))
-    se_unpruned = np.sqrt(np.sum(vsq) / (np.sum((1 - S))) ** 2)
+    se_unpruned = np.sqrt(np.sum(vsq) / (np.sum(np.ones_like(w))) ** 2)
     atte = np.sum(w * v) / np.sum(w * (1 - S))
-    se = np.sqrt(np.sum(w * vsq) / (np.sum(w * (1 - S))) ** 2)
+    se = np.sqrt(np.sum(w * vsq) / (np.sum(w)) ** 2)
 
     testing_data["w"] = w
 
@@ -205,7 +221,8 @@ def brute_force_opt(data, outcome, treatment, sample):
     return result, atte, se, atte_unpruned, se_unpruned, f, testing_data
 
 
-def linear_opt(data, outcome, treatment, sample):
+def linear_opt(data, outcome, treatment, sample, seed = 42):
+    np.random.seed(seed)
     v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data = estimate_dml(
         data, outcome, treatment, sample
     )
@@ -224,13 +241,12 @@ def linear_opt(data, outcome, treatment, sample):
                     -1,
                 )
             )
-            > 0.5
         )
-        se = np.sqrt(np.sum(w * vsq) / (np.sum(w * (1 - S))) ** 2)
+        se = np.nan_to_num(np.sqrt(np.sum(w * vsq) / (np.sum(w)) ** 2), np.inf)
         return se
 
-    a_init = np.random.normal(0, 5, size=(X.shape[1],))
-    result = optimize.minimize(obj, x0=a_init, method="SLSQP", options={"disp": True})
+    a_init = np.random.normal(0, 0.005, size=(X.shape[1],))
+    result = optimize.minimize(obj, x0=a_init, method="COBYLA", options={"disp": True})
     a = result.x
     w = (
         special.expit(
@@ -241,16 +257,16 @@ def linear_opt(data, outcome, treatment, sample):
         > 0.5
     )
     atte_unpruned = np.sum(v) / np.sum((1 - S))
-    se_unpruned = np.sqrt(np.sum(vsq) / (np.sum((1 - S))) ** 2)
-    atte = np.sum(w * v) / np.sum(w * (1 - S))
-    se = np.sqrt(np.sum(w * vsq) / (np.sum(w * (1 - S))) ** 2)
+    se_unpruned = np.sqrt(np.sum(vsq) / (np.sum(np.ones_like(w))) ** 2)
+    atte = np.sum(w * v) / np.sum(w)
+    se = np.sqrt(np.sum(w * vsq) / (np.sum(w)) ** 2)
 
     testing_data["w"] = w
     f = characterize_tree(X, w)
     return result, atte, se, atte_unpruned, se_unpruned, f, testing_data
 
 
-def kmeans_opt(data, outcome, treatment, sample, k=100):
+def kmeans_opt(data, outcome, treatment, sample, k=100, threshold = 0.5):
     v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data = estimate_dml(
         data, outcome, treatment, sample
     )
@@ -264,38 +280,43 @@ def kmeans_opt(data, outcome, treatment, sample, k=100):
 
     bounds = optimize.Bounds(lb=0, ub=1, keep_feasible=True)
     kmeans = KMeans(n_clusters=k, random_state=0, n_init="auto").fit(X)
-
-    labels = pd.DataFrame(kmeans.labels_, index=X.index, columns=["group"])
-    labels["w"] = np.ones((n,))
+    
+    D_labels = X.copy(deep=True)
+    D_labels["vsq"] = vsq
+    D_labels["S"] = S
+    D_labels["group"] = kmeans.labels_
+    D_labels["w"] = np.ones((n,))
 
     def obj(a):
         for l in range(k):
-            labels.loc[labels["group"] == l, "w"] = a[l]
-        w = labels["w"].values
-        return np.sqrt(np.sum(w * vsq) / (np.sum(w * (1 - S))) ** 2)
+            D_labels.loc[D_labels["group"] == l, "w"] = (a[l])
+        w = D_labels["w"].values
+        return np.nan_to_num(np.sqrt(np.sum(w * vsq) / (np.sum(w)) ** 2), np.inf)
 
-    a_init = np.ones((k,))
+    a_init = np.random.binomial(1, 0.95, size = k)
 
     result = optimize.minimize(
         obj,
         x0=a_init,
-        method="COBYLA",
-        options={"disp": False},
+        method="CG",
+        # options={"disp": True}, 
+        bounds=bounds,
     )
     a = result.x
     for l in range(k):
-        labels.loc[labels["group"] == l, "w"] = a[l] > 0.5
-    w = labels["w"].values
+        D_labels.loc[D_labels["group"] == l, "a"] = a[l]
+        D_labels.loc[D_labels["group"] == l, "w"] = (a[l] > threshold)
+    w = D_labels["w"].values
 
-    atte_unpruned = np.sum(v) / np.sum((1 - S))
-    se_unpruned = np.sqrt(np.sum(vsq) / (np.sum((1 - S))) ** 2)
-    atte = np.sum(w * v) / np.sum(w * (1 - S))
-    se = np.sqrt(np.sum(w * vsq) / (np.sum(w * (1 - S))) ** 2)
+    atte_unpruned = np.sum(v) / np.sum(np.ones_like(v))
+    se_unpruned = np.sqrt(np.sum(vsq) / (np.sum(np.ones_like(v))) ** 2)
+    atte = np.sum(w * v) / np.sum(w * np.ones_like(v))
+    se = np.sqrt(np.sum(w * vsq) / ((np.sum(w * np.ones_like(v))) ** 2) )
 
     testing_data["w"] = w
 
-    f = characterize_tree(X, w)
-    return result, atte, se, atte_unpruned, se_unpruned, f, testing_data
+    f = None # characterize_tree(X, D_labels["w"])
+    return D_labels, atte, se, atte_unpruned, se_unpruned, f, testing_data
 
 
 def tree_opt(data, outcome, treatment, sample, leaf_proba=0.25, seed=42):
@@ -344,7 +365,15 @@ def tree_opt(data, outcome, treatment, sample, leaf_proba=0.25, seed=42):
     return D, w_tree, testing_data
 
 
-def forest_opt(data, outcome, treatment, sample, leaf_proba=0.25, seed=42, num_trees = 10, vote_threshold=2/3):
+def forest_opt(data, outcome, treatment, 
+               sample, leaf_proba=0.25, 
+               seed=42, num_trees = 10, 
+               vote_threshold=2/3, 
+               explore_proba=0.05, 
+               feature_est = 'Ridge', 
+               top_k_trees = False,
+               k = 10,
+               cutoff = 'baseline'):
     np.random.seed(seed)
     v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data = estimate_dml(
         data, outcome, treatment, sample
@@ -356,30 +385,50 @@ def forest_opt(data, outcome, treatment, sample, leaf_proba=0.25, seed=42, num_t
         columns=[outcome, treatment, sample]
     )  # pre-treatment covariates
     n = testing_data.shape[0]  # total number of units
-
-    vsq_m = lm.RidgeCV().fit(X, vsq)
-
+    
     features = ["leaf"] + list(X.columns)
-    proba = np.array(
-        [leaf_proba]
-        + list(
-            np.abs(
-                vsq_m.coef_.reshape(
-                    -1,
-                )
-            )
-            / np.sum(
+    if feature_est == 'Ridge':
+        vsq_m = lm.RidgeCV().fit(X, vsq)
+        proba = np.array(
+            [leaf_proba]
+            + list(
                 np.abs(
                     vsq_m.coef_.reshape(
                         -1,
                     )
                 )
+                / np.sum(
+                    np.abs(
+                        vsq_m.coef_.reshape(
+                            -1,
+                        )
+                    )
+                )
             )
         )
-    )
+    else:
+        vsq_m = en.GradientBoostingRegressor(n_estimators=100).fit(X, vsq)
+        proba = np.array(
+            [leaf_proba]
+            + list(
+                np.abs(
+                    vsq_m.feature_importances_.reshape(
+                        -1,
+                    )
+                )
+                / np.sum(
+                    np.abs(
+                        vsq_m.feature_importances_.reshape(
+                            -1,
+                        )
+                    )
+                )
+            )
+        )
+    
     proba = proba / np.sum(proba)
     split_feature = pd.Series(proba, index=features)
-    # print(split_feature)
+    print(split_feature)
 
     np.random.seed(seed)
     
@@ -393,21 +442,29 @@ def forest_opt(data, outcome, treatment, sample, leaf_proba=0.25, seed=42, num_t
         D["vsq"] = vsq
         D["w"] = np.ones_like(vsq)
         D["S"] = S
-        w_tree = split(split_feature, D, D, np.inf, 0)
+        w_tree = split(split_feature, D, D, np.inf, 0, explore_proba=explore_proba)
         D_forest["w_tree_%d"%(t_iter)] = D["w"]
         w_forest += [w_tree]
     
-    baseline_loss = np.sqrt(np.sum(D_forest["vsq"]) / ((np.sum((1 - D_forest["S"])) ** 2)))
-    
-    not_in_rashomon_set = [ i for i in range(len(w_forest)) if w_forest[i]["local objective"] >= baseline_loss ]
-    rashomon_set = [ i for i in range(len(w_forest)) if w_forest[i]["local objective"] < baseline_loss ]
+    if top_k_trees:
+        obj_trees = [ w_forest[i]["local objective"] for i in range(len(w_forest)) ]
+        idx = np.argpartition(obj_trees, k)
+        rashomon_set = [ i for i in idx[:k] ]
+        not_in_rashomon_set = [ i for i in idx[k:] ]
+        
+    else: 
+        if cutoff == 'baseline':
+            baseline_loss = np.sqrt(np.sum(D_forest["vsq"]) / ((D_forest.shape[0])**2))
+            cutoff = baseline_loss
+        not_in_rashomon_set = [ i for i in range(len(w_forest)) if w_forest[i]["local objective"] >= cutoff ]
+        rashomon_set = [ i for i in range(len(w_forest)) if w_forest[i]["local objective"] < cutoff ]
     
     D_rash = D_forest.drop(columns = ["w_tree_%d" % (i) for i in not_in_rashomon_set])
     
     D_w_rash = D_forest[["w_tree_%d" % (i) for i in rashomon_set]]
     D_rash["w_opt"] = (D_w_rash.mean(axis=1) > (vote_threshold)).astype(int)
     D_rash["vote_count"] = D_w_rash.sum(axis=1)
-    
-    return D_rash, D_forest, w_forest, rashomon_set, testing_data
+    f = characterize_tree(X, D_rash["w_opt"])
+    return D_rash, D_forest, w_forest, rashomon_set, f, testing_data
 
 

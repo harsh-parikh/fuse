@@ -3,18 +3,19 @@ import pandas as pd
 import scipy.special as sp
 import sklearn.datasets as datasets
 
+
 def gen_XY(n=1000, seed=0):
     np.random.seed(seed)
-    X, Y0 = datasets.make_friedman1(n_samples=n, noise=1, random_state=seed)
-    Y1 = Y0 + np.log(Y0 + 1)
-    p = X.shape[1]
-
-    # p_discrete = 5
-    # p_continuous = p - p_discrete
-    # Xc = np.random.normal(0,1,size=(n,p_continuous))
-    # Xd = np.random.binomial(1,0.5,size=(n,p_discrete))
-    # X = np.hstack((Xc,Xd))
-    return pd.DataFrame(X, columns=["X%d" % (i) for i in range(p)]), pd.DataFrame(
+    C = np.random.binomial(1,0.75,size=(n))
+    X0 = C * np.random.normal(0,1,size=(n)) + (1-C) * np.random.normal(4,1,size=(n))
+    X1 = np.random.normal(X0,3,size=(n)) 
+    Y0 = np.zeros(n)
+    Y1 = X0**2 + X1**2
+    X = pd.DataFrame()
+    X['X0'] = X0
+    X['X1'] = X1
+    
+    return X, pd.DataFrame(
         np.hstack((Y0.reshape(-1, 1), Y1.reshape(-1, 1))), columns=["Y0", "Y1"]
     )
 
@@ -22,8 +23,9 @@ def gen_XY(n=1000, seed=0):
 def gen_S(X, seed=0):
     seed = seed + 1
     np.random.seed(seed)
-    a = - 3 * ((X["X0"] > 0.4) * (X["X0"] < 0.6) * (X["X1"] > 0.4) * (X["X1"] < 0.6))
-    S = np.random.binomial(1, sp.expit(a))
+    r = ( (X["X0"])**2  + (X["X1"])**2 )**(1/2)
+    a = 0.5 * (r < 3) + 0.25 * (r >= 3) * (r < 5) + 0.05
+    S = np.random.binomial(1, a)
     return pd.DataFrame(S, columns=["S"])
 
 

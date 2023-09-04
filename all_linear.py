@@ -8,12 +8,13 @@ def gen_XY(n=1000, seed=0):
     np.random.seed(seed)
     X = np.random.normal(0, 1, size=(n, 20))
     coef = [(2 * np.random.binomial(1, 0.5) - 1) * (2 ** (-i)) for i in range(20)]
-    coef2 = [
-        (2 * np.random.binomial(1, 0.5) - 1)
-        * np.random.binomial(1, 0.25)
-        * (np.log(i + 1))
-        for i in range(20)
-    ]
+    coef2 = [4, 2, 1, 0.5, 0.25] + [ 0 for i in range(15) ] 
+    # [
+    #     (2 * np.random.binomial(1, 0.5) - 1)
+    #     * np.random.binomial(1, 0.25)
+    #     * (np.log(i + 1))
+    #     for i in range(20)
+    # ]
     Y0 = np.dot(X, coef)
     Y1 = Y0 + np.dot(X, coef2)
     p = X.shape[1]
@@ -36,10 +37,11 @@ def gen_S(X, seed=0):
     seed = seed + 1
     np.random.seed(seed)
     coef = [
-        (2 * np.random.binomial(1, 0.5) - 1) * np.random.binomial(1, 0.2)
+         (2 * np.random.binomial(1, 0.5) - 1) * np.random.binomial(1, 0.6)
         for i in range(20)
     ]
     a = np.dot(X, coef)
+    print((a,sp.expit(a)))
     S = np.random.binomial(1, sp.expit(a))
     return pd.DataFrame(S, columns=["S"]), coef
 
@@ -54,7 +56,7 @@ def gen_T(X, S, seed=0):
     return pd.DataFrame(T, columns=["T"]), pi
 
 
-def get_data(n=1000, seed=10240):
+def get_data(n=1000, seed=42):
     seed = seed + 10
     X, Y, coef2 = gen_XY(n=n, seed=seed)
     S, coef = gen_S(X, seed=seed)
