@@ -80,7 +80,7 @@ def estimate_dml(data, outcome, treatment, sample, w=None):
     return v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data
 
 
-def characterize_tree(X, w, max_depth=2):
+def characterize_tree(X, w, max_depth=3):
     f = tree.DecisionTreeClassifier(max_depth=max_depth).fit(X, w)
     return f
 
