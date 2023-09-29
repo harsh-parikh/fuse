@@ -12,72 +12,77 @@ from sklearn.cluster import KMeans
 
 # ***Helper and Primary Functions***
 
-def estimate_dml(data, outcome, treatment, sample, w=None):
+# Training
+def train(training_data, outcome, treatment, sample,):
+    S = training_data[sample]  # indicator for the sample
+    Y = training_data[outcome]  # outcome variable
+    T = training_data[treatment]  # indicator for the treatment
+    X = training_data.drop(
+        columns=[outcome, treatment, sample]
+    )  # pre-treatment covariates
+
+    pi = S.mean()  # proportion of units in experimental study
+
+    # P(S=1 | X)
+    pi_m = lm.LogisticRegressionCV().fit(X, S)
+
+    # E[ Y | S=1, T=1, X ]
+    mu_1_m = en.GradientBoostingRegressor().fit(
+        X.loc[(S == 1) * (T == 1)], Y.loc[(S == 1) * (T == 1)]
+    )
+
+    # E[ Y | S=1, T=0, X ]
+    mu_0_m = en.GradientBoostingRegressor().fit(
+        X.loc[(S == 1) * (T == 0)], Y.loc[(S == 1) * (T == 0)]
+    )
+
+    # P(T=1 | X)
+    e_m = lm.LogisticRegressionCV().fit(X.loc[S == 1], T.loc[S == 1])
+
+    return pi, pi_m, mu_1_m, mu_0_m, e_m
+
+# Estimation
+def estimate(testing_data, outcome, treatment, sample, pi, pi_m, mu_1_m, mu_0_m, e_m):
+    S = testing_data[sample]  # indicator for the sample
+    Y = testing_data[outcome]  # outcome variable
+    T = testing_data[treatment]  # indicator for the treatment
+    X = testing_data.drop(
+        columns=[outcome, treatment, sample]
+    )  # pre-treatment covariates
+    
+    # pi = P(S=1)
+    pi = np.mean(S.values)
+    
+    # l(X) = (P(S=1 | X)/P(S=1)) / (P(S=0 | X)/P(S=0))
+    lX = ( pi_m.predict_proba(X)[:, 1] / pi ) / ( pi_m.predict_proba(X)[:, 0] / (1-pi) )
+
+    # IPW Estimator for ATTE
+    a = ((S * T * (Y - mu_1_m.predict(X))) / e_m.predict_proba(X)[:, 1])
+    - ((S * (1 - T) * (Y - mu_0_m.predict(X))) / e_m.predict_proba(X)[:, 0]) 
+    + (S * (mu_1_m.predict(X) - mu_0_m.predict(X)))
+    b = 1 / lX
+    v1 = a * b
+
+    # outcome regression estimator for ATTE
+    v2 = (1 - S) * (mu_1_m.predict(X) - mu_0_m.predict(X))
+    v = v1 + v2
+    return v
+
+def estimate_dml(data, outcome, treatment, sample, crossfit = 1):
     n = data.shape[0]  # total number of units
-
-    training_data, testing_data = train_test_split(data, test_size=0.5)
-
-    # Training
-    def train(training_data):
-        S = training_data[sample]  # indicator for the sample
-        Y = training_data[outcome]  # outcome variable
-        T = training_data[treatment]  # indicator for the treatment
-        X = training_data.drop(
-            columns=[outcome, treatment, sample]
-        )  # pre-treatment covariates
-
-        pi = S.mean()  # proportion of units in experimental study
-
-        # P(S=1 | X)
-        pi_m = en.GradientBoostingClassifier().fit(X, S)
-
-        # E[ Y | S=1, T=1, X ]
-        mu_1_m = en.GradientBoostingRegressor().fit(
-            X.loc[(S == 1) * (T == 1)], Y.loc[(S == 1) * (T == 1)]
-        )
-
-        # E[ Y | S=1, T=0, X ]
-        mu_0_m = en.GradientBoostingRegressor().fit(
-            X.loc[(S == 1) * (T == 0)], Y.loc[(S == 1) * (T == 0)]
-        )
-
-        # P(T=1 | X)
-        e_m = lm.LogisticRegressionCV().fit(X.loc[S == 1], T.loc[S == 1])
-
-        return pi, pi_m, mu_1_m, mu_0_m, e_m
-
-    # Estimation
-    def estimate(testing_data):
-        S = testing_data[sample]  # indicator for the sample
-        Y = testing_data[outcome]  # outcome variable
-        T = testing_data[treatment]  # indicator for the treatment
-        X = testing_data.drop(
-            columns=[outcome, treatment, sample]
-        )  # pre-treatment covariates
-
-        # l(X) = P(S=1 | X) / P(S=0 | X)
-        lX = pi_m.predict_proba(X)[:, 1] / pi_m.predict_proba(X)[:, 0]
-
-        # IPW Estimator for ATTE
-        a = ((S * T * (Y - mu_1_m.predict(X))) / e_m.predict_proba(X)[:, 1]) - (
-            (S * (1 - T) * (Y - mu_0_m.predict(X))) / e_m.predict_proba(X)[:, 0]
-        )
-        b = 1 / lX
-        v1 = a * b
-
-        # outcome regression estimator for ATTE
-        v2 = (1 - S) * (mu_1_m.predict(X) - mu_0_m.predict(X))
-
-        v = v1 + v2
-        atte = np.sum(v) / np.sum((1 - S))
-        vsq = (v - atte) ** 2
-
-        return v, vsq
-
-    pi, pi_m, mu_1_m, mu_0_m, e_m = train(training_data)
-    v, vsq = estimate(testing_data)
-
-    return v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data
+    df_v = []
+    for _ in range(crossfit):
+        training_data, testing_data = train_test_split(data, test_size=0.5)
+        pi, pi_m, mu_1_m, mu_0_m, e_m = train(training_data, outcome, treatment, sample )
+        v = estimate(testing_data, outcome, treatment, sample, pi, pi_m, mu_1_m, mu_0_m, e_m)
+        df_v_ = pd.DataFrame(v.values,columns=['te'])
+        df_v_['primary_index'] = list(testing_data.index)
+        df_v.append(df_v_)
+    df_v = pd.concat(df_v)
+    df_v = df_v.groupby(by='primary_index').mean()
+    df_v['te_sq'] = (df_v['te'] - df_v['te'].mean())**2
+    data2 = data.loc[df_v.index]
+    return df_v, pi, pi_m, mu_1_m, mu_0_m, e_m, data2
 
 
 def characterize_tree(X, w, max_depth=3):
@@ -191,39 +196,9 @@ def reduce_weight(fj, split_feature):
 
 # ***Optimization Functions***
 
-def brute_force_opt(data, outcome, treatment, sample):
-    v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data = estimate_dml(
-        data, outcome, treatment, sample
-    )
-    S = testing_data[sample]  # indicator for the sample
-    Y = testing_data[outcome]  # outcome variable
-    T = testing_data[treatment]  # indicator for the treatment
-    X = testing_data.drop(
-        columns=[outcome, treatment, sample]
-    )  # pre-treatment covariates
-    n = testing_data.shape[0]  # total number of units
-
-    def obj(w):
-        se = np.sqrt(np.sum(w * vsq) / (np.sum(w)) ** 2)
-        return se
-
-    w_init = np.ones((n,))
-    result = optimize.minimize(obj, x0=w_init, method="SLSQP", options={"disp": True})
-    w = result.x
-    atte_unpruned = np.sum(v) / np.sum((1 - S))
-    se_unpruned = np.sqrt(np.sum(vsq) / (np.sum(np.ones_like(w))) ** 2)
-    atte = np.sum(w * v) / np.sum(w * (1 - S))
-    se = np.sqrt(np.sum(w * vsq) / (np.sum(w)) ** 2)
-
-    testing_data["w"] = w
-
-    f = characterize_tree(X, w)
-    return result, atte, se, atte_unpruned, se_unpruned, f, testing_data
-
-
 def linear_opt(data, outcome, treatment, sample, seed = 42):
     np.random.seed(seed)
-    v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data = estimate_dml(
+    df_v, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data = estimate_dml(
         data, outcome, treatment, sample
     )
     S = testing_data[sample]  # indicator for the sample
@@ -233,6 +208,9 @@ def linear_opt(data, outcome, treatment, sample, seed = 42):
         columns=[outcome, treatment, sample]
     )  # pre-treatment covariates
     n = testing_data.shape[0]  # total number of units
+    
+    v = df_v['te']
+    vsq = df_v['te_sq']
 
     def obj(a):
         w = (
@@ -246,7 +224,7 @@ def linear_opt(data, outcome, treatment, sample, seed = 42):
         return se
 
     a_init = np.random.normal(0, 0.005, size=(X.shape[1],))
-    result = optimize.minimize(obj, x0=a_init, method="COBYLA", options={"disp": True})
+    result = optimize.minimize(obj, x0=a_init, method="SLSQP", options={"disp": True})
     a = result.x
     w = (
         special.expit(
@@ -261,13 +239,20 @@ def linear_opt(data, outcome, treatment, sample, seed = 42):
     atte = np.sum(w * v) / np.sum(w)
     se = np.sqrt(np.sum(w * vsq) / (np.sum(w)) ** 2)
 
-    testing_data["w"] = w
+    D_labels = X.copy(deep=True)
+    D_labels["v"] = v
+    D_labels["vsq"] = vsq
+    D_labels["S"] = S
+    D_labels["w"] = w
+    
+    print((atte, se, atte_unpruned, se_unpruned))
+
     f = characterize_tree(X, w)
-    return result, atte, se, atte_unpruned, se_unpruned, f, testing_data
+    return D_labels, result, f, testing_data
 
 
 def kmeans_opt(data, outcome, treatment, sample, k=100, threshold = 0.5):
-    v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data = estimate_dml(
+    df_v, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data = estimate_dml(
         data, outcome, treatment, sample
     )
     S = testing_data[sample]  # indicator for the sample
@@ -277,11 +262,15 @@ def kmeans_opt(data, outcome, treatment, sample, k=100, threshold = 0.5):
         columns=[outcome, treatment, sample]
     )  # pre-treatment covariates
     n = testing_data.shape[0]  # total number of units
+    
+    v = df_v['te']
+    vsq = df_v['te_sq']
 
     bounds = optimize.Bounds(lb=0, ub=1, keep_feasible=True)
     kmeans = KMeans(n_clusters=k, random_state=0, n_init="auto").fit(X)
     
     D_labels = X.copy(deep=True)
+    D_labels["v"] = v
     D_labels["vsq"] = vsq
     D_labels["S"] = S
     D_labels["group"] = kmeans.labels_
@@ -306,22 +295,21 @@ def kmeans_opt(data, outcome, treatment, sample, k=100, threshold = 0.5):
     for l in range(k):
         D_labels.loc[D_labels["group"] == l, "a"] = a[l]
         D_labels.loc[D_labels["group"] == l, "w"] = (a[l] > threshold)
-    w = D_labels["w"].values
+    w = D_labels["w"].astype(int)
 
     atte_unpruned = np.sum(v) / np.sum(np.ones_like(v))
     se_unpruned = np.sqrt(np.sum(vsq) / (np.sum(np.ones_like(v))) ** 2)
     atte = np.sum(w * v) / np.sum(w * np.ones_like(v))
     se = np.sqrt(np.sum(w * vsq) / ((np.sum(w * np.ones_like(v))) ** 2) )
-
-    testing_data["w"] = w
-
-    f = None # characterize_tree(X, D_labels["w"])
-    return D_labels, atte, se, atte_unpruned, se_unpruned, f, testing_data
+    
+    print((atte, se, atte_unpruned, se_unpruned))
+    f = characterize_tree(X, w)
+    return D_labels, f, testing_data
 
 
 def tree_opt(data, outcome, treatment, sample, leaf_proba=0.25, seed=42):
     np.random.seed(seed)
-    v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data = estimate_dml(
+    df_v, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data = estimate_dml(
         data, outcome, treatment, sample
     )
     S = testing_data[sample]  # indicator for the sample
@@ -331,6 +319,9 @@ def tree_opt(data, outcome, treatment, sample, leaf_proba=0.25, seed=42):
         columns=[outcome, treatment, sample]
     )  # pre-treatment covariates
     n = testing_data.shape[0]  # total number of units
+    
+    v = df_v['te']
+    vsq = df_v['te_sq']
 
     vsq_m = lm.RidgeCV().fit(X, vsq)
 
@@ -357,6 +348,7 @@ def tree_opt(data, outcome, treatment, sample, leaf_proba=0.25, seed=42):
     # print(split_feature)
 
     D = X.copy(deep=True)
+    D["v"] = v
     D["vsq"] = vsq
     D["w"] = np.ones_like(vsq)
     D["S"] = S
@@ -375,8 +367,8 @@ def forest_opt(data, outcome, treatment,
                k = 10,
                cutoff = 'baseline'):
     np.random.seed(seed)
-    v, vsq, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data = estimate_dml(
-        data, outcome, treatment, sample
+    df_v, pi, pi_m, mu_1_m, mu_0_m, e_m, testing_data = estimate_dml(
+        data, outcome, treatment, sample, crossfit = 5
     )
     S = testing_data[sample]  # indicator for the sample
     Y = testing_data[outcome]  # outcome variable
@@ -385,10 +377,13 @@ def forest_opt(data, outcome, treatment,
         columns=[outcome, treatment, sample]
     )  # pre-treatment covariates
     n = testing_data.shape[0]  # total number of units
+    v = df_v['te']
+    vsq = df_v['te_sq']
+    print('ATE Est: %.4f'%(v.mean()))
     
     features = ["leaf"] + list(X.columns)
     if feature_est == 'Ridge':
-        vsq_m = lm.RidgeCV().fit(X, vsq)
+        vsq_m = lm.Ridge().fit(X, vsq)
         proba = np.array(
             [leaf_proba]
             + list(
@@ -434,11 +429,13 @@ def forest_opt(data, outcome, treatment,
     
     w_forest = []
     D_forest = X.copy(deep=True)
+    D_forest["v"] = v
     D_forest["vsq"] = vsq
     D_forest["S"] = S
     
     for t_iter in range(num_trees):
         D = X.copy(deep=True)
+        D["v"] = v
         D["vsq"] = vsq
         D["w"] = np.ones_like(vsq)
         D["S"] = S
