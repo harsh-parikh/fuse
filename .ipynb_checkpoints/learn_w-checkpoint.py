@@ -8,6 +8,7 @@ import sklearn.tree as tree
 import scipy.optimize as optimize
 import scipy.special as special
 from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold
 from sklearn.cluster import KMeans
 
 # ***Helper and Primary Functions***
@@ -68,19 +69,22 @@ def estimate(testing_data, outcome, treatment, sample, pi, pi_m, mu_1_m, mu_0_m,
     v = v1 + v2
     return v
 
-def estimate_dml(data, outcome, treatment, sample, crossfit = 1):
+def estimate_dml(data, outcome, treatment, sample, crossfit = 5):
     n = data.shape[0]  # total number of units
     df_v = []
-    for _ in range(crossfit):
-        training_data, testing_data = train_test_split(data, test_size=0.5)
+    skf = StratifiedKFold(n_splits=crossfit)
+    for i, (train_index, test_index) in enumerate(skf.split(data.drop(columns=[sample]),data[sample])):
+        print(f"Fold {i}")
+        training_data, testing_data = data.iloc[train_index], data.iloc[test_index]
         pi, pi_m, mu_1_m, mu_0_m, e_m = train(training_data, outcome, treatment, sample )
         v = estimate(testing_data, outcome, treatment, sample, pi, pi_m, mu_1_m, mu_0_m, e_m)
         df_v_ = pd.DataFrame(v.values,columns=['te'])
         df_v_['primary_index'] = list(testing_data.index)
         df_v.append(df_v_)
     df_v = pd.concat(df_v)
-    df_v = df_v.groupby(by='primary_index').mean()
+    # df_v = df_v.groupby(by='primary_index').mean()
     df_v['te_sq'] = (df_v['te'] - df_v['te'].mean())**2
+    df_v = df_v.groupby(by='primary_index').mean()
     data2 = data.loc[df_v.index]
     return df_v, pi, pi_m, mu_1_m, mu_0_m, e_m, data2
 
@@ -432,6 +436,9 @@ def forest_opt(data, outcome, treatment,
     D_forest["v"] = v
     D_forest["vsq"] = vsq
     D_forest["S"] = S
+    
+    selection_model = lm.LogisticRegressionCV().fit(X,S)
+    D_forest["l(X)"] = selection_model.predict_proba(X)[:,1]/selection_model.predict_proba(X)[:,0]
     
     for t_iter in range(num_trees):
         D = X.copy(deep=True)
