@@ -65,7 +65,7 @@ def estimate(testing_data, outcome, treatment, sample, pi, pi_m, mu_1_m, mu_0_m,
     v1 = a * b
 
     # outcome regression estimator for ATTE
-    v2 = (1 - S) * (mu_1_m.predict(X) - mu_0_m.predict(X))
+    v2 = 0 # (1 - S) * (mu_1_m.predict(X) - mu_0_m.predict(X))
     v = v1 + v2
     return v
 
@@ -78,13 +78,13 @@ def estimate_dml(data, outcome, treatment, sample, crossfit = 5):
         training_data, testing_data = data.iloc[train_index], data.iloc[test_index]
         pi, pi_m, mu_1_m, mu_0_m, e_m = train(training_data, outcome, treatment, sample )
         v = estimate(testing_data, outcome, treatment, sample, pi, pi_m, mu_1_m, mu_0_m, e_m)
-        df_v_ = pd.DataFrame(v.values,columns=['te'])
+        df_v_ = pd.DataFrame(v.values,columns=['te'],index=list(testing_data.index))
         df_v_['primary_index'] = list(testing_data.index)
         df_v.append(df_v_)
     df_v = pd.concat(df_v)
     # df_v = df_v.groupby(by='primary_index').mean()
-    df_v['te_sq'] = (df_v['te'] - df_v['te'].mean())**2
-    df_v = df_v.groupby(by='primary_index').mean()
+    df_v['te_sq'] = (df_v['te'] - df_v['te'].loc[data[sample]==1].mean())**2
+    df_v = df_v.groupby(by='primary_index').mean().loc[data[sample]==1]
     data2 = data.loc[df_v.index]
     return df_v, pi, pi_m, mu_1_m, mu_0_m, e_m, data2
 
@@ -437,8 +437,8 @@ def forest_opt(data, outcome, treatment,
     D_forest["vsq"] = vsq
     D_forest["S"] = S
     
-    selection_model = lm.LogisticRegressionCV().fit(X,S)
-    D_forest["l(X)"] = selection_model.predict_proba(X)[:,1]/selection_model.predict_proba(X)[:,0]
+    # selection_model = lm.LogisticRegressionCV().fit(X,S)
+    D_forest["l(X)"] = pi_m.predict_proba(X)[:,1]/pi_m.predict_proba(X)[:,0]
     
     for t_iter in range(num_trees):
         D = X.copy(deep=True)
