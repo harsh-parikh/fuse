@@ -57,7 +57,7 @@ def estimate(testing_data, outcome, treatment, sample, pi, pi_m, mu_1_m, mu_0_m,
     # l(X) = (P(S=1 | X)/P(S=1)) / (P(S=0 | X)/P(S=0))
     lX = ( pi_m.predict_proba(X)[:, 1] / pi ) / ( pi_m.predict_proba(X)[:, 0] / (1-pi) )
 
-    # IPW Estimator for ATTE
+    # AIPW Estimator for ATTE
     a = ((S * T * (Y - mu_1_m.predict(X))) / e_m.predict_proba(X)[:, 1])
     - ((S * (1 - T) * (Y - mu_0_m.predict(X))) / e_m.predict_proba(X)[:, 0]) 
     + (S * (mu_1_m.predict(X) - mu_0_m.predict(X)))
