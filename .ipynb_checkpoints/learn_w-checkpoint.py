@@ -327,7 +327,7 @@ def tree_opt(data, outcome, treatment, sample, leaf_proba=0.25, seed=42):
     v = df_v['te']
     vsq = df_v['te_sq']
 
-    vsq_m = lm.RidgeCV().fit(X, vsq)
+    vsq_m = lm.Ridge().fit(X, vsq)
 
     features = ["leaf"] + list(X.columns)
     proba = np.array(
