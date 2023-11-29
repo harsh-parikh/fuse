@@ -8,7 +8,7 @@ def gen_XY(n=1000, seed=0):
     np.random.seed(seed)
     X = np.random.normal(0, 1, size=(n, 20))
     coef = [(2 * np.random.binomial(1, 0.5) - 1) * (2 ** (-i)) for i in range(20)]
-    coef2 = [4, 2, 1, 0.5, 0.25] + [ 0 for i in range(15) ] 
+    coef2 = [4, 2, 1, 0.5, 0.25] + [0 for i in range(15)]
     # [
     #     (2 * np.random.binomial(1, 0.5) - 1)
     #     * np.random.binomial(1, 0.25)
@@ -37,11 +37,11 @@ def gen_S(X, seed=0):
     seed = seed + 1
     np.random.seed(seed)
     coef = [
-         (2 * np.random.binomial(1, 0.5) - 1) * np.random.binomial(1, 0.6)
+        (2 * np.random.binomial(1, 0.5) - 1) * np.random.binomial(1, 0.6)
         for i in range(20)
     ]
     a = np.dot(X, coef)
-    print((a,sp.expit(a)))
+    print((a, sp.expit(a)))
     S = np.random.binomial(1, sp.expit(a))
     return pd.DataFrame(S, columns=["S"]), coef
 
