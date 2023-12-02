@@ -82,6 +82,8 @@ def estimate_dml(data, outcome, treatment, sample, crossfit=5):
         df_v_["b"] = b
         df_v.append(df_v_)
     df_v = pd.concat(df_v)
+    df_v.replace([np.inf, -np.inf], np.nan, inplace=True)
+    df_v.dropna(inplace=True)
     # df_v = df_v.groupby(by='primary_index').mean()
     df_v["te_sq"] = (df_v["te"] - df_v["te"].loc[data[sample] == 1].mean()) ** 2
     df_v["a_sq"] = (df_v["a"] - df_v["a"].loc[data[sample] == 1].mean()) ** 2
@@ -199,7 +201,6 @@ def reduce_weight(fj, split_feature):
 
 
 def linear_opt(data, outcome, treatment, sample, seed=42):
-    np.random.seed(seed)
     df_v, pi, pi_m, e_m, testing_data = estimate_dml(
         data, outcome, treatment, sample
     )
@@ -213,6 +214,14 @@ def linear_opt(data, outcome, treatment, sample, seed=42):
 
     v = df_v["te"]
     vsq = df_v["te_sq"]
+    
+    D_labels = X.copy(deep=True)
+    D_labels["v"] = v
+    D_labels["vsq"] = vsq
+    D_labels["S"] = S
+    D_labels["w"] = np.ones((n,))
+    
+    np.random.seed(seed)
 
     def obj(a):
         w = special.expit(
@@ -234,21 +243,11 @@ def linear_opt(data, outcome, treatment, sample, seed=42):
         )
         > 0.5
     )
-    atte_unpruned = np.sum(v) / np.sum((1 - S))
-    se_unpruned = np.sqrt(np.sum(vsq) / (np.sum(np.ones_like(w))) ** 2)
-    atte = np.sum(w * v) / np.sum(w)
-    se = np.sqrt(np.sum(w * vsq) / (np.sum(w)) ** 2)
 
-    D_labels = X.copy(deep=True)
-    D_labels["v"] = v
-    D_labels["vsq"] = vsq
-    D_labels["S"] = S
     D_labels["w"] = w
 
-    print((atte, se, atte_unpruned, se_unpruned))
-
-    f = characterize_tree(X, w)
-    return D_labels, result, f, testing_data
+    f = characterize_tree(X, D_labels["w"])
+    return D_labels, f, testing_data
 
 
 def kmeans_opt(data, outcome, treatment, sample, k=100, threshold=0.5):
@@ -354,7 +353,8 @@ def tree_opt(data, outcome, treatment, sample, leaf_proba=0.25, seed=42):
     D["S"] = S
     np.random.seed(seed)
     w_tree = split(split_feature, D, D, np.inf, 0)
-    return D, w_tree, testing_data
+    f = characterize_tree(X, D["w"].astype(int))
+    return D, f, testing_data
 
 
 def forest_opt(
