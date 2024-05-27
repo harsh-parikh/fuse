@@ -30,7 +30,7 @@ def train(
     pi = S.mean()  # proportion of units in experimental study
 
     # P(S=1 | X)
-    pi_m = en.AdaBoostRegressor().fit(X, (S/pi))
+    pi_m = lm.LogisticRegressionCV().fit(X, S) # en.AdaBoostRegressor().fit(X, (S/pi))
 
     # P(T=1 | X)
     e_m = lm.LogisticRegressionCV().fit(X.loc[S == 1], T.loc[S == 1])
@@ -51,7 +51,7 @@ def estimate(testing_data, outcome, treatment, sample, pi, pi_m, e_m):
     pi = np.mean(S.values)
 
     # l(X) = (P(S=1 | X)/P(S=1)) / (P(S=0 | X)/P(S=0))
-    lX = (pi_m.predict(X) / pi) / ( (1/pi - pi_m.predict(X)) / (1 - pi))
+    lX = (pi_m.predict_proba(X)[:, 1] / pi) / ( (pi_m.predict_proba(X)[:, 0]) / (1 - pi))
 
     # IPW Estimator for ATTE
     a = ((S * T * (Y)) / e_m.predict_proba(X)[:, 1]) - (
@@ -65,26 +65,14 @@ def estimate(testing_data, outcome, treatment, sample, pi, pi_m, e_m):
 
 def estimate_dml(data, outcome, treatment, sample, crossfit=5):
     n = data.shape[0]  # total number of units
-    df_v = []
-    skf = StratifiedKFold(n_splits=crossfit)
-    for i, (train_index, test_index) in enumerate(
-        skf.split(data.drop(columns=[sample]), data[sample])
-    ):
-        print(f"Fold {i}")
-        training_data, testing_data = data.iloc[train_index], data.iloc[test_index]
-        pi, pi_m, e_m = train(training_data, outcome, treatment, sample)
-        v, a, b = estimate(
-            testing_data, outcome, treatment, sample, pi, pi_m, e_m
-        )
-        df_v_ = pd.DataFrame(v.values, columns=["te"], index=list(testing_data.index))
-        df_v_["primary_index"] = list(testing_data.index)
-        df_v_["a"] = a
-        df_v_["b"] = b
-        df_v.append(df_v_)
-    df_v = pd.concat(df_v)
+    pi, pi_m, e_m = train(data, outcome, treatment, sample)
+    v, a, b = estimate(data, outcome, treatment, sample, pi, pi_m, e_m)
+    df_v = pd.DataFrame(v.values, columns=["te"], index=list(data.index))
+    df_v["primary_index"] = list(data.index)
+    df_v["a"] = a
+    df_v["b"] = b
     df_v.replace([np.inf, -np.inf], np.nan, inplace=True)
     df_v.dropna(inplace=True)
-    # df_v = df_v.groupby(by='primary_index').mean()
     df_v["te_sq"] = (df_v["te"] - df_v["te"].loc[data[sample] == 1].mean()) ** 2
     df_v["a_sq"] = (df_v["a"] - df_v["a"].loc[data[sample] == 1].mean()) ** 2
     df_v = df_v.groupby(by="primary_index").mean().loc[data[sample] == 1]
@@ -264,7 +252,8 @@ def kmeans_opt(data, outcome, treatment, sample, k=100, threshold=0.5):
 
     v = df_v["te"]
     vsq = df_v["te_sq"]
-
+    
+    print(X.shape)
     bounds = optimize.Bounds(lb=0, ub=1, keep_feasible=True)
     kmeans = KMeans(n_clusters=k, random_state=0, n_init="auto").fit(X)
 
