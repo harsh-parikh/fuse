@@ -397,7 +397,7 @@ def forest_opt(
             )
         )
     else:
-        vsq_m = en.GradientBoostingRegressor(n_estimators=100).fit(X, vsq)
+        vsq_m = en.GradientBoostingRegressor(n_estimators=100).fit(X, v)
         proba = np.array(
             [leaf_proba]
             + list(
