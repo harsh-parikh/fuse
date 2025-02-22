@@ -386,11 +386,9 @@ def reduce_weight(fj, split_feature):
 
 
 
-
-
 def tree_opt(data, outcome, treatment, sample, leaf_proba=0.25, seed=42):
     """
-    Optimizes tree-based partitioning for estimating treatment effects.
+    Optimizes tree-based partitioning
 
     This function estimates inverse probability weighting (IPW), computes feature importance 
     based on variance, and recursively partitions the data using a decision tree structure.
@@ -491,8 +489,6 @@ def forest_opt(
     cutoff="baseline",
 ):
     """
-    Performs a treatment effect estimation using a decision forest approach.
-    
     Args:
         data (pd.DataFrame): The input dataset containing covariates, treatment, and outcome.
         outcome (str): Column name representing the outcome variable.
@@ -597,3 +593,112 @@ def forest_opt(
     f = characterize_tree(X, D_rash["w_opt"])
     
     return D_rash, D_forest, w_forest, rashomon_set, f, testing_data
+
+
+### Auxiliary Functions
+
+def linear_opt(data, outcome, treatment, sample, seed=42):
+    df_v, pi, pi_m, e_m, testing_data = estimate_ipw(
+        data, outcome, treatment, sample
+    )
+    S = testing_data[sample]  # indicator for the sample
+    Y = testing_data[outcome]  # outcome variable
+    T = testing_data[treatment]  # indicator for the treatment
+    X = testing_data.drop(
+        columns=[outcome, treatment, sample]
+    )  # pre-treatment covariates
+    n = testing_data.shape[0]  # total number of units
+
+    v = df_v["te"]
+    vsq = df_v["te_sq"]
+    
+    D_labels = X.copy(deep=True)
+    D_labels["v"] = v
+    D_labels["vsq"] = vsq
+    D_labels["S"] = S
+    D_labels["w"] = np.ones((n,))
+    
+    np.random.seed(seed)
+
+    def obj(a):
+        w = special.expit(
+            np.matmul(X.values, a.reshape(-1, 1)).reshape(
+                -1,
+            )
+        )
+        se = np.nan_to_num(np.sqrt(np.sum(w * vsq) / (np.sum(w)) ** 2), np.inf)
+        return se
+
+    a_init = np.random.normal(0, 0.005, size=(X.shape[1],))
+    result = optimize.minimize(obj, x0=a_init, method="SLSQP", options={"disp": True})
+    a = result.x
+    w = (
+        special.expit(
+            np.matmul(X.values, a.reshape(-1, 1)).reshape(
+                -1,
+            )
+        )
+        > 0.5
+    )
+
+    D_labels["w"] = w
+
+    f = characterize_tree(X, D_labels["w"])
+    return D_labels, f, testing_data
+
+
+def kmeans_opt(data, outcome, treatment, sample, k=100, threshold=0.5):
+    df_v, pi, pi_m, e_m, testing_data = estimate_ipw(
+        data, outcome, treatment, sample
+    )
+    S = testing_data[sample]  # indicator for the sample
+    Y = testing_data[outcome]  # outcome variable
+    T = testing_data[treatment]  # indicator for the treatment
+    X = testing_data.drop(
+        columns=[outcome, treatment, sample]
+    )  # pre-treatment covariates
+    n = testing_data.shape[0]  # total number of units
+
+    v = df_v["te"]
+    vsq = df_v["te_sq"]
+    
+    print(X.shape)
+    bounds = optimize.Bounds(lb=0, ub=1, keep_feasible=True)
+    kmeans = KMeans(n_clusters=k, random_state=0, n_init="auto").fit(X)
+
+    D_labels = X.copy(deep=True)
+    D_labels["v"] = v
+    D_labels["vsq"] = vsq
+    D_labels["S"] = S
+    D_labels["group"] = kmeans.labels_
+    D_labels["w"] = np.ones((n,))
+
+    def obj(a):
+        for l in range(k):
+            D_labels.loc[D_labels["group"] == l, "w"] = a[l]
+        w = D_labels["w"].values
+        return np.nan_to_num(np.sqrt(np.sum(w * vsq) / (np.sum(w)) ** 2), np.inf)
+
+    a_init = np.random.binomial(1, 0.95, size=k)
+
+    result = optimize.minimize(
+        obj,
+        x0=a_init,
+        method="CG",
+        # options={"disp": True},
+        bounds=bounds,
+    )
+    a = result.x
+    for l in range(k):
+        D_labels.loc[D_labels["group"] == l, "a"] = a[l]
+        D_labels.loc[D_labels["group"] == l, "w"] = a[l] > threshold
+    w = D_labels["w"].astype(int)
+
+    atte_unpruned = np.sum(v) / np.sum(np.ones_like(v))
+    se_unpruned = np.sqrt(np.sum(vsq) / (np.sum(np.ones_like(v))) ** 2)
+    atte = np.sum(w * v) / np.sum(w * np.ones_like(v))
+    se = np.sqrt(np.sum(w * vsq) / ((np.sum(w * np.ones_like(v))) ** 2))
+
+    print((atte, se, atte_unpruned, se_unpruned))
+    f = characterize_tree(X, w)
+    return D_labels, f, testing_data
