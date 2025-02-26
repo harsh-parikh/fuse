@@ -6,6 +6,9 @@ from sklearn.tree import DecisionTreeClassifier
 import sklearn.linear_model as lm
 import sklearn.ensemble as en
 from sklearn.model_selection import train_test_split
+import scipy.optimize as optimize
+import scipy.special as special
+from sklearn.cluster import KMeans
 
 # *** Helper and Primary Functions ***
 
@@ -516,7 +519,7 @@ def forest_opt(
     np.random.seed(seed)
     
     # Estimate inverse probability weighting (IPW) for treatment effect adjustment
-    df_v, pi, pi_m, e_m, testing_data = estimate_ipw(data, outcome, treatment, sample, crossfit=5)
+    df_v, pi, pi_m, e_m, testing_data = estimate_ipw(data, outcome, treatment, sample)
     
     # Extract relevant variables from testing data
     S = testing_data[sample]  # Sample membership indicator
